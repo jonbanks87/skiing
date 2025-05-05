@@ -1,0 +1,6 @@
+*.png
+snotel/archive/
+*.pdf
+run_list/archive
+run_list/app.py
+run_list/test.py
