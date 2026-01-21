@@ -204,7 +204,7 @@ if int(site_df.index.value_counts().max()) > 1:
     raise ValueError('Duplicate Entries in sites.csv file. All names must be unique')
 
 ########### Get Snotel Data and Plot ##############
-for SiteName in ['Bear Lake', 'Longmont']:
+for SiteName in ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass']:
     SiteID = site_df.loc[SiteName]['snotel_sitenumber']
     human_snotel_url = f'https://wcc.sc.egov.usda.gov/nwcc/site?sitenum={SiteID}'
     lat = site_df.loc[SiteName]['lat']
@@ -462,8 +462,11 @@ for SiteName in ['Bear Lake', 'Longmont']:
     # set snowbanks_password=yourpasswordhere
     # In the google account, this seems to need to be an App Password, not the regular account password
     # I couldn't navigate to this, but if I went to myaccount.google.com, I searched for "App Passwords" and it took me to the right place
+    # If you change your google password, you will need to make a new App Password
     email_password = os.getenv('snowbanks_password')
     email_receiver = 'jon.banks.87@gmail.com'
+
+    print(email_sender,email_receiver, email_password)
 
     def send_emails(email_list):
         for person in email_list:
