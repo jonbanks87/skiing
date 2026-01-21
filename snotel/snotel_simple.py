@@ -16,6 +16,15 @@ import matplotlib as mpl
 from timezonefinder import TimezoneFinder
 import pytz
 from suntime import Sun
+from email.message import EmailMessage
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+import smtplib
+import ssl
+import os
+
 
 tab10 = plt.get_cmap('tab10')
 
@@ -191,6 +200,8 @@ def get_new_snow_and_df(SiteName):
     new_snow_24h = get_new_snow(snotel_df)
     return new_snow_24h
 
+noaa_df_dict = {}
+snotel_df_dict = {}
 ############## Import Sites ##############
 
 snotel_sites_df = pd.read_csv('snotel_sites.csv') # From https://wcc.sc.egov.usda.gov/nwcc/yearcount?network=sntl&state=&counttype=statelist
@@ -204,7 +215,8 @@ if int(site_df.index.value_counts().max()) > 1:
     raise ValueError('Duplicate Entries in sites.csv file. All names must be unique')
 
 ########### Get Snotel Data and Plot ##############
-for SiteName in ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass']:
+all_sites = ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass']
+for SiteName in all_sites:
     SiteID = site_df.loc[SiteName]['snotel_sitenumber']
     human_snotel_url = f'https://wcc.sc.egov.usda.gov/nwcc/site?sitenum={SiteID}'
     lat = site_df.loc[SiteName]['lat']
@@ -338,81 +350,6 @@ for SiteName in ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass'
         next_sunrise = sun.get_local_sunrise_time(date + timedelta(days = 1)) + timezone_diff
         sun_df.loc[len(sun_df)] = [date, sunrise, sunset, next_sunrise]
 
-    ########### Plotting ##################
-    print("plotting")
-    fig, ax = plt.subplots(4, sharex=True)
-    fig.set_figwidth(10)
-    fig.set_figheight(7)
-
-    min_time = noaa_df['startTime_local'].min()
-    max_time = noaa_df['startTime_local'].max()
-
-    temp_norm = plt.Normalize(22, 42)
-
-    temp_plot = noaa_df.plot.scatter(x = 'startTime_local', y = 'temperature', ax = ax[0], xlim = (min_time, max_time), c = 'temperature', cmap = 'coolwarm', norm = temp_norm)
-    ax[0].collections[0].colorbar.remove()
-    ax[0].set_ylabel('Temperature (F)')
-    ax[0].scatter(x = sun_df.sunrise, y = [noaa_df['temperature'].min()-5 for n in range(len(sun_df))], marker='$\u263C$', c = 'gold')
-    ax[0].scatter(x = sun_df.sunset, y = [noaa_df['temperature'].min()-5 for n in range(len(sun_df))], marker='$\u263E$')
-
-
-
-    snowfall_norm = plt.Normalize(0,0.5)
-    noaa_df.plot.scatter(x = 'startTime_local', y = 'total_snowfall_in', ax = ax[1], xlim = (min_time, max_time), c = 'snowfall_in', norm = snowfall_norm, cmap = 'viridis')
-    ax[1].collections[0].colorbar.remove()
-    ax[1].set_ylabel('Snowfall (in)')
-
-    ax11 = ax[1].twinx()
-    noaa_df.plot(x = 'startTime_local', y = 'snowfall_in', ax = ax11, xlim = (min_time, max_time), c = tab10(1), x_compat=True, alpha = 0.3, legend = False, label = 'Snowfall Rate')
-    ax11.set_ylabel('Snowfall Rate (in/hour)')
-    ax11.fill_between(noaa_df['startTime_local'], noaa_df['snowfall_in'], 0, color=tab10(1), alpha=0.3)
-    from labellines import labelLine, labelLines
-    labelLines(ax11.get_lines(), zorder=2.5, align = True, xvals = [0.5], yoffsets=[0.15])
-
-    for axis in ax:
-        plt.grid(True)
-        axis.grid(which='major', color='#DDDDDD', linewidth=0.8)
-        axis.grid(which='minor', color='#EEEEEE', linestyle=':', linewidth=0.5)
-
-    skycover_df.plot(x = 'startTime_local', y = 'value', ax = ax[2], label = 'Skycover', c = '#a3a3a3', x_compat = True, legend = False)
-    ax[2].fill_between(skycover_df['startTime_local'], skycover_df['value'], 0, color='#a3a3a3', alpha=0.3)
-    ax[2].fill_between(skycover_df['startTime_local'], skycover_df['value'], 100, color='#6bc9ff', alpha=0.3)
-    ax[2].set_ylabel('Skycover (%)')
-
-    wind_norm = plt.Normalize(0,30)
-    idx = mpl.dates.date2num(noaa_df['startTime_local'])
-    ax[3].quiver(idx, noaa_df['windSpeed_mph'],noaa_df['wind_x'],noaa_df['wind_y'],noaa_df['windSpeed_mph'], norm = wind_norm)
-    ax[3].set_ylabel('Wind Speed (mph)')
-    ax[3].set_ylim(0,noaa_df['windSpeed_mph'].max()+ 5)
-
-    date_format = mdates.DateFormatter("%a, %m-%d")
-    ax[3].xaxis.set_major_formatter(date_format)
-
-    ax22 = ax[2].twinx()
-    # precip_prob_df_simple.plot(x = 'time_local', y = 'value', ax = ax[4], label = 'probabilityOfPrecipitation', c = '#a3a3a3', x_compat = True, legend = False)
-    ax22.fill_between(precip_prob_df_simple['time_local'], precip_prob_df_simple['value'], 0, color='none', alpha=0.3, hatch = 'OO', edgecolor='#005791')
-    # ax[4].fill_between(precip_prob_df_simple['time_local'], precip_prob_df_simple['value'], 100, color='#6bc9ff', alpha=0.3)
-    ax22.set_ylabel('Precip (%)')
-    ax22.set_ylim(0,100)
-    labelLines(ax22.get_lines(), zorder=2.5, align = True, xvals = [0.5], yoffsets=[0.15])
-
-    for index, row in sun_df.iterrows():
-        sunset = row['sunset']
-        next_sunrise = row['next_sunrise']
-        for axis in ax:
-            axis.axvspan(sunset, next_sunrise, facecolor='gray', alpha=0.07)
-
-    fig2, ax2 = plt.subplots()
-    fig2.suptitle(f'Snotel Report for {SiteName}')
-    fig2.set_figwidth(15)
-    snotel_df.plot.bar(x = 'Date', y = 'snow_depth_in', 
-                    ylim = (snotel_df['snow_depth_in'].min()-1,snotel_df['snow_depth_in'].max()+1),
-                    ax = ax2,
-                    color = list(snotel_df['color']), legend = False)
-    ax2.set_ylabel('Snow Depth (in)')
-    fig2.tight_layout()
-
-
     today = datetime.today()
     tomorrow = datetime.today() + timedelta(days = 1)
     two_days = datetime.today() + timedelta(days = 2)
@@ -423,93 +360,172 @@ for SiteName in ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass'
     wind_direction = noaa_df_24h['windDirection'].mode()[0]
     total_snowfall = round(noaa_df_24h['total_snowfall_in'].max(),1)
 
-    print('CAIC:',f'https://avalanche.state.co.us/?lat={lat}&lng={lon}')
-    print('High:',high_temp, 'F')
-    print('Low:',low_temp, 'F')
-    print('Wind:',average_windspeed, 'mph',wind_direction)
-    print('Predicted Snowfall:',total_snowfall,'inches')
-    print('New Snow:',new_snow_24h, 'inches')
+    noaa_df_dict[SiteName] = noaa_df
+    snotel_df_dict[SiteName] = snotel_df
 
-    fig.suptitle(f'Weather for {SiteName}')
-    fig.set_tight_layout('tight')
-    fig.subplots_adjust(hspace=0)
-    plt.grid(True)
-    date_format = mdates.DateFormatter('%Y-%m-%d')  # Specify the desired format
+    ########### Plotting ##################
+    plot_me = False
+    if plot_me == True:
+        print("plotting")
+        fig, ax = plt.subplots(4, sharex=True)
+        fig.set_figwidth(10)
+        fig.set_figheight(7)
 
-    caic_url = f'https://avalanche.state.co.us/?lat={lat}&lng={lon}'
+        min_time = noaa_df['startTime_local'].min()
+        max_time = noaa_df['startTime_local'].max()
+
+        temp_norm = plt.Normalize(22, 42)
+
+        temp_plot = noaa_df.plot.scatter(x = 'startTime_local', y = 'temperature', ax = ax[0], xlim = (min_time, max_time), c = 'temperature', cmap = 'coolwarm', norm = temp_norm)
+        ax[0].collections[0].colorbar.remove()
+        ax[0].set_ylabel('Temperature (F)')
+        ax[0].scatter(x = sun_df.sunrise, y = [noaa_df['temperature'].min()-5 for n in range(len(sun_df))], marker='$\u263C$', c = 'gold')
+        ax[0].scatter(x = sun_df.sunset, y = [noaa_df['temperature'].min()-5 for n in range(len(sun_df))], marker='$\u263E$')
 
 
-    ########### Unique to Snotel_Simple.py ###########
-    fig.savefig('daily_forecast.png',dpi = 300)
-    fig2.savefig('daily_snotel_report.png',dpi = 300)
 
-    # plt.show()
-    # sys.exit()
+        snowfall_norm = plt.Normalize(0,0.5)
+        noaa_df.plot.scatter(x = 'startTime_local', y = 'total_snowfall_in', ax = ax[1], xlim = (min_time, max_time), c = 'snowfall_in', norm = snowfall_norm, cmap = 'viridis')
+        ax[1].collections[0].colorbar.remove()
+        ax[1].set_ylabel('Snowfall (in)')
 
-    from email.message import EmailMessage
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.base import MIMEBase
-    from email import encoders
-    import smtplib
-    import ssl
-    import os
+        ax11 = ax[1].twinx()
+        noaa_df.plot(x = 'startTime_local', y = 'snowfall_in', ax = ax11, xlim = (min_time, max_time), c = tab10(1), x_compat=True, alpha = 0.3, legend = False, label = 'Snowfall Rate')
+        ax11.set_ylabel('Snowfall Rate (in/hour)')
+        ax11.fill_between(noaa_df['startTime_local'], noaa_df['snowfall_in'], 0, color=tab10(1), alpha=0.3)
+        from labellines import labelLine, labelLines
+        labelLines(ax11.get_lines(), zorder=2.5, align = True, xvals = [0.5], yoffsets=[0.15])
 
-    
-    email_sender = 'snowbanks.weather@gmail.com'
-    # Password is stored in environment variable for security
-    # To set the environment variable, in CmdPrompt use:
-    # set snowbanks_password=yourpasswordhere
-    # In the google account, this seems to need to be an App Password, not the regular account password
-    # I couldn't navigate to this, but if I went to myaccount.google.com, I searched for "App Passwords" and it took me to the right place
-    # If you change your google password, you will need to make a new App Password
-    email_password = os.getenv('snowbanks_password')
-    email_receiver = 'jon.banks.87@gmail.com'
+        for axis in ax:
+            plt.grid(True)
+            axis.grid(which='major', color='#DDDDDD', linewidth=0.8)
+            axis.grid(which='minor', color='#EEEEEE', linestyle=':', linewidth=0.5)
 
-    print(email_sender,email_receiver, email_password)
+        skycover_df.plot(x = 'startTime_local', y = 'value', ax = ax[2], label = 'Skycover', c = '#a3a3a3', x_compat = True, legend = False)
+        ax[2].fill_between(skycover_df['startTime_local'], skycover_df['value'], 0, color='#a3a3a3', alpha=0.3)
+        ax[2].fill_between(skycover_df['startTime_local'], skycover_df['value'], 100, color='#6bc9ff', alpha=0.3)
+        ax[2].set_ylabel('Skycover (%)')
 
-    def send_emails(email_list):
-        for person in email_list:
-            body = f'''
-                NOAA Forecast: {human_noaa_url}
-                Snotel: {human_snotel_url}
-                High: {high_temp} F
-                Low: {low_temp} F
-                Wind: {average_windspeed} mph {wind_direction}
-                Predicted Snowfall: {total_snowfall} inches
-                New Snow: {new_snow_24h} inches
-                '''
-            msg = MIMEMultipart()
-            msg['From'] = email_sender
-            msg['To'] = person
-            date = datetime.today().strftime('%Y-%m-%d')
-            msg['Subject'] = f'{SiteName} Daily Snow Report for {date}'
-            msg.attach(MIMEText(body, 'plain'))
+        wind_norm = plt.Normalize(0,30)
+        idx = mpl.dates.date2num(noaa_df['startTime_local'])
+        ax[3].quiver(idx, noaa_df['windSpeed_mph'],noaa_df['wind_x'],noaa_df['wind_y'],noaa_df['windSpeed_mph'], norm = wind_norm)
+        ax[3].set_ylabel('Wind Speed (mph)')
+        ax[3].set_ylim(0,noaa_df['windSpeed_mph'].max()+ 5)
 
-            for filename in ['daily_forecast.png', 'daily_snotel_report.png']:
-                # filename = 'daily_forecast.png'
-                attachment = open(filename, 'rb')
-                attachment_package = MIMEBase('application', 'octed-stream')
-                attachment_package.set_payload((attachment).read())
-                encoders.encode_base64(attachment_package)
-                attachment_package.add_header('Content-Disposition', 'attachment; filename= ' + filename)
-                msg.attach(attachment_package)
-            
-            text = msg.as_string()
+        date_format = mdates.DateFormatter("%a, %m-%d")
+        ax[3].xaxis.set_major_formatter(date_format)
 
-            print('Connecting to server...')
-            TIE_server = smtplib.SMTP('smtp.gmail.com', 587)
-            TIE_server.starttls()
-            TIE_server.login(email_sender, email_password)
-            print("Successfully connected to server")
-            print()
+        ax22 = ax[2].twinx()
+        # precip_prob_df_simple.plot(x = 'time_local', y = 'value', ax = ax[4], label = 'probabilityOfPrecipitation', c = '#a3a3a3', x_compat = True, legend = False)
+        ax22.fill_between(precip_prob_df_simple['time_local'], precip_prob_df_simple['value'], 0, color='none', alpha=0.3, hatch = 'OO', edgecolor='#005791')
+        # ax[4].fill_between(precip_prob_df_simple['time_local'], precip_prob_df_simple['value'], 100, color='#6bc9ff', alpha=0.3)
+        ax22.set_ylabel('Precip (%)')
+        ax22.set_ylim(0,100)
+        labelLines(ax22.get_lines(), zorder=2.5, align = True, xvals = [0.5], yoffsets=[0.15])
 
-            print(f"Sending email to: {person}")
-            TIE_server.sendmail(email_sender, person, text)
-            print(f'Email sent to: {person}')
-            print()
+        for index, row in sun_df.iterrows():
+            sunset = row['sunset']
+            next_sunrise = row['next_sunrise']
+            for axis in ax:
+                axis.axvspan(sunset, next_sunrise, facecolor='gray', alpha=0.07)
+
+        fig2, ax2 = plt.subplots()
+        fig2.suptitle(f'Snotel Report for {SiteName}')
+        fig2.set_figwidth(15)
+        snotel_df.plot.bar(x = 'Date', y = 'snow_depth_in', 
+                        ylim = (snotel_df['snow_depth_in'].min()-1,snotel_df['snow_depth_in'].max()+1),
+                        ax = ax2,
+                        color = list(snotel_df['color']), legend = False)
+        ax2.set_ylabel('Snow Depth (in)')
+        fig2.tight_layout()
+
+
         
-        TIE_server.quit()
 
-    send_emails([email_receiver])
-    # plt.show()
+        print('CAIC:',f'https://avalanche.state.co.us/?lat={lat}&lng={lon}')
+        print('High:',high_temp, 'F')
+        print('Low:',low_temp, 'F')
+        print('Wind:',average_windspeed, 'mph',wind_direction)
+        print('Predicted Snowfall:',total_snowfall,'inches')
+        print('New Snow:',new_snow_24h, 'inches')
+
+        fig.suptitle(f'Weather for {SiteName}')
+        fig.set_tight_layout('tight')
+        fig.subplots_adjust(hspace=0)
+        plt.grid(True)
+        date_format = mdates.DateFormatter('%Y-%m-%d')  # Specify the desired format
+
+        caic_url = f'https://avalanche.state.co.us/?lat={lat}&lng={lon}'
+
+
+        ########### Unique to Snotel_Simple.py ###########
+        fig.savefig('daily_forecast.png',dpi = 300)
+        fig2.savefig('daily_snotel_report.png',dpi = 300)
+
+email = True
+email_sites = ['Bear Lake', 'Longmont','Cameron Pass']
+for SiteName in email_sites:
+    if email == True:
+        noaa_df = noaa_df_dict[SiteName]
+        snotel_df = snotel_df_dict[SiteName]
+    
+
+
+        
+        email_sender = 'snowbanks.weather@gmail.com'
+        # Password is stored in environment variable for security
+        # To set the environment variable, in CmdPrompt use:
+        # set snowbanks_password=yourpasswordhere
+        # In the google account, this seems to need to be an App Password, not the regular account password
+        # I couldn't navigate to this, but if I went to myaccount.google.com, I searched for "App Passwords" and it took me to the right place
+        # If you change your google password, you will need to make a new App Password
+        email_password = os.getenv('snowbanks_password')
+        email_receiver = 'jon.banks.87@gmail.com'
+
+        print(email_sender,email_receiver, email_password)
+
+        def send_emails(email_list):
+            for person in email_list:
+                body = f'''
+                    NOAA Forecast: {human_noaa_url}
+                    Snotel: {human_snotel_url}
+                    High: {high_temp} F
+                    Low: {low_temp} F
+                    Wind: {average_windspeed} mph {wind_direction}
+                    Predicted Snowfall: {total_snowfall} inches
+                    New Snow: {new_snow_24h} inches
+                    '''
+                msg = MIMEMultipart()
+                msg['From'] = email_sender
+                msg['To'] = person
+                date = datetime.today().strftime('%Y-%m-%d')
+                msg['Subject'] = f'{SiteName} Daily Snow Report for {date}'
+                msg.attach(MIMEText(body, 'plain'))
+
+                for filename in ['daily_forecast.png', 'daily_snotel_report.png']:
+                    # filename = 'daily_forecast.png'
+                    attachment = open(filename, 'rb')
+                    attachment_package = MIMEBase('application', 'octed-stream')
+                    attachment_package.set_payload((attachment).read())
+                    encoders.encode_base64(attachment_package)
+                    attachment_package.add_header('Content-Disposition', 'attachment; filename= ' + filename)
+                    msg.attach(attachment_package)
+                
+                text = msg.as_string()
+
+                print('Connecting to server...')
+                TIE_server = smtplib.SMTP('smtp.gmail.com', 587)
+                TIE_server.starttls()
+                TIE_server.login(email_sender, email_password)
+                print("Successfully connected to server")
+                print()
+
+                print(f"Sending email to: {person}")
+                TIE_server.sendmail(email_sender, person, text)
+                print(f'Email sent to: {person}')
+                print()
+            
+            TIE_server.quit()
+
+        send_emails([email_receiver])
+        # plt.show()
