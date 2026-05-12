@@ -115,14 +115,8 @@ def get_snotel_df(SiteName, years = 'recent'):
 
     snotel_df = snotel_df[0].str.split(',', expand=True)
     
-    snotel_df.rename(columns={0:snotel_df[0][0], 
-                        1:snotel_df[1][0], 
-                        2:snotel_df[2][0],
-                        3:snotel_df[3][0],
-                        4:snotel_df[4][0],
-                        5:snotel_df[5][0],
-                        6:snotel_df[6][0],
-                        7:snotel_df[7][0]}, inplace=True)
+    for i in range(len(snotel_df.loc[0])):
+        snotel_df.rename(columns = {i:snotel_df[i][0]}, inplace = True)
 
     snotel_df.rename(columns = {f'{snotel_site_name} ({SiteID}) Snow Depth (in)':'snow_depth_in',
                                 f'{snotel_site_name} ({SiteID}) Snow Water Equivalent (in)':'swe_in',
@@ -156,7 +150,7 @@ def get_snotel_df(SiteName, years = 'recent'):
 
 
 def split_name_num(text):
-    result = list(re.findall('(.+) \((\d+)\)',text)[0])
+    result = list(re.findall(r'(.+) \((\d+)\)',text)[0])
     return result
 
 
@@ -180,19 +174,24 @@ def get_nearest_snotel_site(name, lat, lon):
     snotel_sites_df['dist'] = snotel_sites_df.apply(get_dist, axis=1)
     # display(snotel_sites_df[snotel_sites_df['dist'] == snotel_sites_df['dist'].min()])
     closest_snotel_site_df = snotel_sites_df[snotel_sites_df['dist'] == snotel_sites_df['dist'].min()]
+    closest_snotel_site_lat = closest_snotel_site_df.reset_index().loc[0]['lat']
+    closest_snotel_site_lon = closest_snotel_site_df.reset_index().loc[0]['lon']
     closest_snotel_site = closest_snotel_site_df.reset_index().loc[0]['name']
     sitenumber = closest_snotel_site_df.reset_index().loc[0]['number']
     state = closest_snotel_site_df.reset_index().loc[0]['state']
     # return closest_snotel_site
     return pd.Series({'snotel_sitename':closest_snotel_site,
                       'snotel_sitenumber':sitenumber,
-                      'state':state})
+                      'state':state,
+                      'lat':closest_snotel_site_lat,
+                      'lon':closest_snotel_site_lon})
 
 def get_new_snow(snotel_df):
     yesterday_string = (datetime.today() - timedelta(days = 1)).date().strftime('%Y-%m-%d')
     snotel_df_24h = snotel_df[snotel_df['Date'] > yesterday_string]
 
-    new_snow_24h = snotel_df_24h[snotel_df_24h['new_snow'] >= 0]['new_snow'].sum()
+    # new_snow_24h = snotel_df_24h[snotel_df_24h['new_snow'] >= 0]['new_snow'].sum()
+    new_snow_24h = snotel_df_24h['snow_depth_in'].max() - snotel_df_24h['snow_depth_in'].min()
     return new_snow_24h
 
 def get_new_snow_and_df(SiteName):
@@ -209,13 +208,19 @@ snotel_sites_df[['name','number']] = snotel_sites_df['site_name'].apply(lambda x
 snotel_sites_df.set_index('name', inplace= True)
 
 site_df = pd.read_csv('sites.csv')
-site_df[['snotel_sitename','snotel_sitenumber','state']] = site_df.apply(lambda x: get_nearest_snotel_site(x['name'],x['lat'],x['lon']), axis = 1)
+site_df[['snotel_sitename','snotel_sitenumber','state','snotel_lat','snotel_lon']] = site_df.apply(lambda x: get_nearest_snotel_site(x['name'],x['lat'],x['lon']), axis = 1)
 site_df.set_index('name', inplace = True)
 if int(site_df.index.value_counts().max()) > 1:
     raise ValueError('Duplicate Entries in sites.csv file. All names must be unique')
 
 ########### Get Snotel Data and Plot ##############
-all_sites = ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass']
+# all_sites = ['Bear Lake', 'Longmont', 'Ouray','Cameron Pass','Berthoud Pass', 'Red Mountain Pass']
+all_sites = []
+email_sites = ['Bear Lake', 'Longmont','Brainard', 'Berthoud Pass']
+# email_sites = ['Bear Lake']
+for SiteName in email_sites:
+    if SiteName not in all_sites:
+        all_sites.append(SiteName)
 for SiteName in all_sites:
     SiteID = site_df.loc[SiteName]['snotel_sitenumber']
     human_snotel_url = f'https://wcc.sc.egov.usda.gov/nwcc/site?sitenum={SiteID}'
@@ -254,12 +259,21 @@ for SiteName in all_sites:
 
 
     grid_data_url = forecast_landing_json['properties']['forecastGridData']
-    print(f'Retrieving NOAA snowfall data')
-    print(f'      {grid_data_url}')
-    grid_data_data = requests.get(grid_data_url)
-    print('     converting to json')
-    grid_data_json = grid_data_data.json()
-    print('     Received snowfall and skycover data')
+    for attempt in range(3):
+        try:
+            print(f'Retrieving NOAA snowfall data')
+            print(f'      {grid_data_url}')
+            grid_data_data = requests.get(grid_data_url)
+            print('     converting to json')
+            grid_data_json = grid_data_data.json()
+            print('     Received snowfall and skycover data')
+            break
+        except:
+            print('Failed to retrieve NOAA grid data. Retrying...')
+            if attempt == 2:
+                raise ValueError('Failed to retrieve NOAA grid data after 3 attempts. Check your internet connection or the NOAA API status.')
+            continue
+        
     snowfall_df = pd.json_normalize(grid_data_json['properties']['snowfallAmount']['values'])
     skycover_df = pd.json_normalize(grid_data_json['properties']['skyCover']['values'])
     precip_prob_df = pd.json_normalize(grid_data_json['properties']['probabilityOfPrecipitation']['values'])
@@ -279,7 +293,7 @@ for SiteName in all_sites:
 
 
     # Getting hourly snowfall and merging with main df
-    print("     Generating hourly snowfal data")
+    print("     Generating hourly snowfall data")
     hourly_snowfall_df = pd.DataFrame(columns = ['startTime','snowfall_mm'])
     for line in snowfall_df.iterrows():
         snowfall = line[1]['value']
@@ -364,7 +378,7 @@ for SiteName in all_sites:
     snotel_df_dict[SiteName] = snotel_df
 
     ########### Plotting ##################
-    plot_me = False
+    plot_me = True
     if plot_me == True:
         print("plotting")
         fig, ax = plt.subplots(4, sharex=True)
@@ -437,6 +451,8 @@ for SiteName in all_sites:
                         ax = ax2,
                         color = list(snotel_df['color']), legend = False)
         ax2.set_ylabel('Snow Depth (in)')
+        ax2.tick_params(axis='x', labelsize=6)
+
         fig2.tight_layout()
 
 
@@ -447,7 +463,7 @@ for SiteName in all_sites:
         print('Low:',low_temp, 'F')
         print('Wind:',average_windspeed, 'mph',wind_direction)
         print('Predicted Snowfall:',total_snowfall,'inches')
-        print('New Snow:',new_snow_24h, 'inches')
+        print('New Snow since yesterday 12AM:',new_snow_24h, 'inches')
 
         fig.suptitle(f'Weather for {SiteName}')
         fig.set_tight_layout('tight')
@@ -459,11 +475,11 @@ for SiteName in all_sites:
 
 
         ########### Unique to Snotel_Simple.py ###########
-        fig.savefig('daily_forecast.png',dpi = 300)
-        fig2.savefig('daily_snotel_report.png',dpi = 300)
+        fig.savefig(f'daily_forecast_{SiteName}.png',dpi = 300)
+        fig2.savefig(f'daily_snotel_report_{SiteName}.png',dpi = 300)
 
 email = True
-email_sites = ['Bear Lake', 'Longmont','Cameron Pass']
+
 for SiteName in email_sites:
     if email == True:
         noaa_df = noaa_df_dict[SiteName]
@@ -482,7 +498,6 @@ for SiteName in email_sites:
         email_password = os.getenv('snowbanks_password')
         email_receiver = 'jon.banks.87@gmail.com'
 
-        print(email_sender,email_receiver, email_password)
 
         def send_emails(email_list):
             for person in email_list:
@@ -502,7 +517,7 @@ for SiteName in email_sites:
                 msg['Subject'] = f'{SiteName} Daily Snow Report for {date}'
                 msg.attach(MIMEText(body, 'plain'))
 
-                for filename in ['daily_forecast.png', 'daily_snotel_report.png']:
+                for filename in [f'daily_forecast_{SiteName}.png', f'daily_snotel_report_{SiteName}.png']:
                     # filename = 'daily_forecast.png'
                     attachment = open(filename, 'rb')
                     attachment_package = MIMEBase('application', 'octed-stream')
